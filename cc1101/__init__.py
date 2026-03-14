@@ -50,11 +50,13 @@ class CC1101:
     dev: str
     rx_config: Optional[RXConfig] = None
     handle: Optional[CC1101Handle] = None
+    io_blocking: bool = False
 
     def __init__(
-        self, dev: str, rx_config: Optional[RXConfig] = None, blocking: bool = False
+        self, dev: str, rx_config: Optional[RXConfig] = None, blocking: bool = False, io_blocking: bool = False
     ):
         self.dev = dev
+        self.io_blocking = io_blocking
 
         if blocking:
             self.handle = CC1101Handle(self._open(), True)
@@ -70,7 +72,11 @@ class CC1101:
         if not os.path.exists(self.dev):
             raise OSError(f"{self.dev} does not exist")
 
-        fh = os.open(self.dev, os.O_RDWR)
+        flags = os.O_RDWR
+        if not self.io_blocking:
+            flags |= os.O_NONBLOCK
+
+        fh = os.open(self.dev, flags)
 
         version = bytearray(4)
         ioctl.read(fh, ioctl.IOCTL.GET_VERSION, version)
@@ -140,13 +146,16 @@ class CC1101:
                 while True:
                     try:
                         packets.append(os.read(fh, self.rx_config.packet_length))
+                        if self.io_blocking:
+                            break
                     except OSError as e:
-                        if e.errno == errno.ENOMSG:
+                        if e.errno in (errno.EAGAIN, errno.ENOMSG):
                             return packets
                         elif e.errno == errno.EMSGSIZE:
                             raise DeviceException(DeviceError.PACKET_SIZE)
                         elif e.errno == errno.EFAULT:
                             raise DeviceException(DeviceError.COPY)
+            return packets
 
         raise IOError("RX config not set")
 
